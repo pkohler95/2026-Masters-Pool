@@ -1,9 +1,14 @@
 import FamilyRow from "./FamilyRow";
 import styles from "./Leaderboard.module.css";
+import type { Tournament } from "@/data/types";
 import { getLiveLeaderboardData } from "@/lib/liveScores";
 
-export default async function Leaderboard() {
-  const data = await getLiveLeaderboardData();
+interface LeaderboardProps {
+  tournament: Tournament;
+}
+
+export default async function Leaderboard({ tournament }: LeaderboardProps) {
+  const data = await getLiveLeaderboardData(tournament);
 
   return (
     <div className={styles.container}>

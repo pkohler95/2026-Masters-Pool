@@ -1,16 +1,12 @@
 import "server-only";
 
-import { poolData } from "@/data/poolData";
+import type { Tournament } from "@/data/types";
 import {
   getCachedLiveLeaderboardAgeMs,
   getCachedLiveLeaderboardData,
   setCachedLiveLeaderboardData,
 } from "@/lib/liveScoreCache";
 import { getScrapeIntervalMs, isTournamentActive } from "@/lib/scrapeSchedule";
-
-const ESPN_MASTERS_LEADERBOARD_URL =
-  process.env.ESPN_MASTERS_LEADERBOARD_URL ??
-  "https://www.espn.com/golf/leaderboard?season=2025&tournamentId=401811941";
 
 const SCORE_TOKEN_RE = /^(E|[+-]\d+|--)$/;
 const POSITION_TOKEN_RE = /^(T?\d+|-)$/;
@@ -51,6 +47,8 @@ export type LivePoolEntry = {
 export type LiveLeaderboardData = {
   source: "espn-scrape";
   tournament: string;
+  tournamentSlug: string;
+  tournamentYear: number;
   status: string;
   updatedAt: string;
   isFallback: boolean;
@@ -113,7 +111,7 @@ function stripCountryPrefix(token: string) {
 function normalizePlayerName(name: string) {
   return cleanPlayerName(name)
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[̀-ͯ]/g, "")
     .replace(/[^a-zA-Z0-9 ]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
@@ -123,7 +121,7 @@ function normalizePlayerName(name: string) {
 function toAsciiLower(value: string) {
   return value
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[̀-ͯ]/g, "")
     .toLowerCase();
 }
 
@@ -142,7 +140,7 @@ function toScoreValue(score: string) {
 
 function formatScore(value: number | null) {
   if (value === null) {
-    return "\u2014";
+    return "—";
   }
 
   if (value === 0) {
@@ -172,13 +170,13 @@ function normalizeEspnScore(score: string | undefined) {
   return "--";
 }
 
-function formatEspnThru(competitor: EspnCompetitor) {
+function formatEspnThru(competitor: EspnCompetitor, timeZone: string) {
   if (competitor.status === "scheduled" && competitor.tee) {
     const teeDate = new Date(competitor.tee);
     return teeDate.toLocaleTimeString("en-US", {
       hour: "numeric",
       minute: "2-digit",
-      timeZone: "America/New_York",
+      timeZone,
     });
   }
 
@@ -273,11 +271,11 @@ function stripHtmlToTokens(html: string) {
     .filter(Boolean);
 }
 
-function getUniquePoolPlayers(): SearchablePoolPlayer[] {
+function getUniquePoolPlayers(tournament: Tournament): SearchablePoolPlayer[] {
   const uniquePlayers = new Map<string, SearchablePoolPlayer>();
 
-  for (const entry of poolData) {
-    for (const playerName of entry.players) {
+  for (const team of tournament.teams) {
+    for (const playerName of team.players) {
       const normalizedName = normalizePlayerName(playerName);
 
       if (!uniquePlayers.has(normalizedName)) {
@@ -310,7 +308,10 @@ function extractEspnLeaderboardData(html: string): EspnLeaderboard | null {
   return data.page?.content?.leaderboard ?? null;
 }
 
-function parseLeaderboardFromEspnData(leaderboard: EspnLeaderboard): ParsedLeaderboard | null {
+function parseLeaderboardFromEspnData(
+  leaderboard: EspnLeaderboard,
+  tournament: Tournament,
+): ParsedLeaderboard | null {
   const competitors = leaderboard.competitors ?? [];
   if (competitors.length === 0) {
     return null;
@@ -325,11 +326,11 @@ function parseLeaderboardFromEspnData(leaderboard: EspnLeaderboard): ParsedLeade
       return {
         name,
         normalizedName: normalizePlayerName(name),
-        position: competitor.pos && competitor.pos !== "-" ? competitor.pos : "\u2014",
+        position: competitor.pos && competitor.pos !== "-" ? competitor.pos : "—",
         score,
         scoreValue: toScoreValue(score),
         today: competitor.today ? normalizeEspnScore(competitor.today) : null,
-        thru: formatEspnThru(competitor),
+        thru: formatEspnThru(competitor, tournament.timeZone),
         totalStrokes:
           competitor.tot != null && competitor.tot !== "" ? `${competitor.tot}` : null,
         status: mapEspnStatus(competitor),
@@ -337,19 +338,20 @@ function parseLeaderboardFromEspnData(leaderboard: EspnLeaderboard): ParsedLeade
     });
 
   return {
-    tournament: leaderboard.name ?? "Masters Tournament",
+    tournament: leaderboard.name ?? tournament.name,
     status: leaderboard.roundStatusDetail ?? "Live scores unavailable",
     players,
   };
 }
 
-function extractTournament(tokens: string[]) {
-  const titleIndex = tokens.findIndex((token) => token === "# Masters Tournament");
+function extractTournament(tokens: string[], tournament: Tournament) {
+  const heading = `# ${tournament.name}`;
+  const titleIndex = tokens.findIndex((token) => token === heading);
   if (titleIndex >= 0) {
     return tokens[titleIndex].replace(/^#\s*/, "");
   }
 
-  return "Masters Tournament";
+  return tournament.name;
 }
 
 function extractStatus(tokens: string[]) {
@@ -454,7 +456,7 @@ function parseRowTail(tail: string) {
 
   if (scheduledMatch) {
     return {
-      position: "\u2014",
+      position: "—",
       score: "--",
       today: null,
       thru: scheduledMatch[2].toUpperCase(),
@@ -473,7 +475,7 @@ function parseRowTail(tail: string) {
 
   const [, score, today, thru, totalStrokes] = liveMatch;
   return {
-    position: "\u2014",
+    position: "—",
     score,
     today,
     thru: thru.toUpperCase(),
@@ -482,7 +484,7 @@ function parseRowTail(tail: string) {
   };
 }
 
-function parsePoolPlayersFromLines(lines: string[]) {
+function parsePoolPlayersFromLines(lines: string[], tournament: Tournament) {
   const headerIndex = lines.findIndex((line) =>
     line.includes("POS PLAYER SCORE TODAY THRU"),
   );
@@ -493,7 +495,7 @@ function parsePoolPlayersFromLines(lines: string[]) {
     return [];
   }
 
-  const uniquePoolPlayers = getUniquePoolPlayers();
+  const uniquePoolPlayers = getUniquePoolPlayers(tournament);
   const parsedPlayers = new Map<string, LivePlayerScore>();
 
   for (const rawLine of lines.slice(startIndex)) {
@@ -539,8 +541,8 @@ function parsePoolPlayersFromLines(lines: string[]) {
           headerIndex >= 0
             ? positionMatch?.[1] && positionMatch[1] !== "-"
               ? positionMatch[1]
-              : "\u2014"
-            : "\u2014",
+              : "—"
+            : "—",
         score: tailData.score,
         scoreValue: toScoreValue(tailData.score),
         today: tailData.today,
@@ -591,7 +593,7 @@ function parseTournamentFieldPlayers(tokens: string[]) {
     players.push({
       name,
       normalizedName: normalizePlayerName(name),
-      position: "\u2014",
+      position: "—",
       score: "--",
       scoreValue: null,
       today: null,
@@ -616,17 +618,17 @@ function toPlayerLookup(players: LivePlayerScore[]) {
   return playerMap;
 }
 
-function buildEntries(players: LivePlayerScore[]) {
+function buildEntries(tournament: Tournament, players: LivePlayerScore[]) {
   const playerLookup = toPlayerLookup(players);
 
-  const entries = poolData.map((entry) => {
-    const scoredPlayers = entry.players.map((name) => {
+  const entries = tournament.teams.map((team) => {
+    const scoredPlayers = team.players.map((name) => {
       const player = playerLookup.get(normalizePlayerName(name));
 
       return {
         name,
-        position: player?.position ?? "\u2014",
-        score: player?.score ?? "\u2014",
+        position: player?.position ?? "—",
+        score: player?.score ?? "—",
         thru: player?.thru ?? "No data",
         status: player?.status ?? "unavailable",
         _scoreValue: player?.scoreValue ?? 0,
@@ -644,7 +646,7 @@ function buildEntries(players: LivePlayerScore[]) {
     })) satisfies PoolPlayerScore[];
 
     return {
-      owner: entry.owner,
+      owner: team.owner,
       players: finalPlayers,
       totalScoreValue,
     };
@@ -667,32 +669,42 @@ function buildEntries(players: LivePlayerScore[]) {
   }));
 }
 
-function createFallbackLeaderboard() {
+function createFallbackLeaderboard(tournament: Tournament): LiveLeaderboardData {
   return {
-    source: "espn-scrape" as const,
-    tournament: "Masters Tournament",
+    source: "espn-scrape",
+    tournament: tournament.name,
+    tournamentSlug: tournament.slug,
+    tournamentYear: tournament.year,
     status: "Live scores unavailable",
     updatedAt: new Date().toISOString(),
     isFallback: true,
-    entries: poolData.map((entry) => ({
-      rank: entry.rank,
-      owner: entry.owner,
-      players: entry.players.map((name, index) => ({
+    entries: tournament.teams.map((team, rank) => ({
+      rank: rank + 1,
+      owner: team.owner,
+      players: team.players.map((name, index) => ({
         name,
-        position: "\u2014",
-        score: "\u2014",
+        position: "—",
+        score: "—",
         thru: "Waiting for live data",
         status: "unavailable" as const,
         isScoring: index < 4,
       })),
-      totalScore: "\u2014",
+      totalScore: "—",
       totalScoreValue: 0,
     })),
   };
 }
 
-async function fetchLeaderboardHtml() {
-  const response = await fetch(ESPN_MASTERS_LEADERBOARD_URL, {
+function buildEspnUrl(tournament: Tournament) {
+  const envOverride = process.env[`ESPN_LEADERBOARD_URL_${tournament.slug.replace(/-/g, "_").toUpperCase()}`];
+  if (envOverride) {
+    return envOverride;
+  }
+  return `https://www.espn.com/golf/leaderboard?season=${tournament.espn.season}&tournamentId=${tournament.espn.tournamentId}`;
+}
+
+async function fetchLeaderboardHtml(tournament: Tournament) {
+  const response = await fetch(buildEspnUrl(tournament), {
     headers: {
       "user-agent":
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
@@ -709,10 +721,10 @@ async function fetchLeaderboardHtml() {
   return response.text();
 }
 
-function parseLeaderboard(html: string): ParsedLeaderboard {
+function parseLeaderboard(html: string, tournament: Tournament): ParsedLeaderboard {
   const espnLeaderboard = extractEspnLeaderboardData(html);
   const parsedFromEspnData = espnLeaderboard
-    ? parseLeaderboardFromEspnData(espnLeaderboard)
+    ? parseLeaderboardFromEspnData(espnLeaderboard, tournament)
     : null;
 
   if (parsedFromEspnData) {
@@ -720,7 +732,7 @@ function parseLeaderboard(html: string): ParsedLeaderboard {
   }
 
   const tokens = stripHtmlToTokens(html);
-  const playersFromLines = parsePoolPlayersFromLines(tokens);
+  const playersFromLines = parsePoolPlayersFromLines(tokens, tournament);
   const players =
     playersFromLines.length > 0 ? playersFromLines : parsePlayersFromTokens(tokens);
 
@@ -729,25 +741,32 @@ function parseLeaderboard(html: string): ParsedLeaderboard {
   }
 
   return {
-    tournament: extractTournament(tokens),
+    tournament: extractTournament(tokens, tournament),
     status: extractStatus(tokens),
     players,
   };
 }
 
-export async function getLiveLeaderboardData(): Promise<LiveLeaderboardData> {
-  const now = new Date();
-  const cachedData = getCachedLiveLeaderboardData();
-  const scrapeIntervalMs = getScrapeIntervalMs(now);
+function cacheKey(tournament: Tournament) {
+  return `${tournament.slug}-${tournament.year}`;
+}
 
-  if (!isTournamentActive(now)) {
-    return cachedData ?? createFallbackLeaderboard();
+export async function getLiveLeaderboardData(
+  tournament: Tournament,
+): Promise<LiveLeaderboardData> {
+  const now = new Date();
+  const key = cacheKey(tournament);
+  const cachedData = getCachedLiveLeaderboardData(key);
+  const scrapeIntervalMs = getScrapeIntervalMs(tournament, now);
+
+  if (!isTournamentActive(tournament, now)) {
+    return cachedData ?? createFallbackLeaderboard(tournament);
   }
 
   if (
     cachedData &&
     scrapeIntervalMs !== null &&
-    getCachedLiveLeaderboardAgeMs(now.getTime()) < scrapeIntervalMs
+    getCachedLiveLeaderboardAgeMs(key, now.getTime()) < scrapeIntervalMs
   ) {
     return cachedData;
   }
@@ -757,20 +776,22 @@ export async function getLiveLeaderboardData(): Promise<LiveLeaderboardData> {
   }
 
   try {
-    const html = await fetchLeaderboardHtml();
-    const parsed = parseLeaderboard(html);
+    const html = await fetchLeaderboardHtml(tournament);
+    const parsed = parseLeaderboard(html, tournament);
     const data: LiveLeaderboardData = {
       source: "espn-scrape",
       tournament: parsed.tournament,
+      tournamentSlug: tournament.slug,
+      tournamentYear: tournament.year,
       status: parsed.status,
       updatedAt: new Date().toISOString(),
       isFallback: false,
-      entries: buildEntries(parsed.players),
+      entries: buildEntries(tournament, parsed.players),
     };
 
-    setCachedLiveLeaderboardData(data, now.getTime());
+    setCachedLiveLeaderboardData(key, data, now.getTime());
     return data;
   } catch {
-    return cachedData ?? createFallbackLeaderboard();
+    return cachedData ?? createFallbackLeaderboard(tournament);
   }
 }

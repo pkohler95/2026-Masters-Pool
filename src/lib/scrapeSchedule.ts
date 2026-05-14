@@ -1,60 +1,50 @@
-const MASTERS_TIME_ZONE = "America/Chicago";
-const TOURNAMENT_START = "2026-04-09T00:00:00-05:00";
-const TOURNAMENT_END = "2026-04-13T00:00:00-05:00";
+import type { Tournament } from "@/data/types";
+
 const MORNING_INTERVAL_MS = 120_000;
 const AFTERNOON_INTERVAL_MS = 60_000;
 const IDLE_RECHECK_MS = 60_000;
 
-function getTimeParts(date: Date) {
+function getTournamentWindow(tournament: Tournament) {
+  const start = new Date(`${tournament.startDate}T00:00:00Z`).getTime();
+  const end = new Date(`${tournament.endDate}T23:59:59Z`).getTime();
+  return { start, end };
+}
+
+function getHourInTimeZone(date: Date, timeZone: string) {
   const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone: MASTERS_TIME_ZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
+    timeZone,
     hour: "2-digit",
-    minute: "2-digit",
     hour12: false,
   });
 
   const parts = formatter.formatToParts(date);
-  const valueFor = (type: string) =>
-    Number(parts.find((part) => part.type === type)?.value ?? "0");
-
-  return {
-    year: valueFor("year"),
-    month: valueFor("month"),
-    day: valueFor("day"),
-    hour: valueFor("hour"),
-    minute: valueFor("minute"),
-  };
+  return Number(parts.find((p) => p.type === "hour")?.value ?? "0");
 }
 
-export function isTournamentActive(date = new Date()) {
-  const time = date.getTime();
-  return (
-    time >= new Date(TOURNAMENT_START).getTime() &&
-    time < new Date(TOURNAMENT_END).getTime()
-  );
+export function isTournamentActive(tournament: Tournament, date = new Date()) {
+  const { start, end } = getTournamentWindow(tournament);
+  const t = date.getTime();
+  return t >= start && t <= end;
 }
 
-export function getScrapeIntervalMs(date = new Date()) {
-  if (!isTournamentActive(date)) {
+export function getScrapeIntervalMs(tournament: Tournament, date = new Date()) {
+  if (!isTournamentActive(tournament, date)) {
     return null;
   }
 
-  const { hour } = getTimeParts(date);
+  const hour = getHourInTimeZone(date, tournament.timeZone);
 
-  if (hour >= 8 && hour < 12) {
+  if (hour >= 7 && hour < 12) {
     return MORNING_INTERVAL_MS;
   }
 
-  if (hour >= 12 && hour < 19) {
+  if (hour >= 12 && hour < 21) {
     return AFTERNOON_INTERVAL_MS;
   }
 
   return null;
 }
 
-export function getClientRefreshDelayMs(date = new Date()) {
-  return getScrapeIntervalMs(date) ?? IDLE_RECHECK_MS;
+export function getClientRefreshDelayMs(tournament: Tournament, date = new Date()) {
+  return getScrapeIntervalMs(tournament, date) ?? IDLE_RECHECK_MS;
 }

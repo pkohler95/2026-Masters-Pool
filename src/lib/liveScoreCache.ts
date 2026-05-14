@@ -1,21 +1,28 @@
 import type { LiveLeaderboardData } from "@/lib/liveScores";
 
-let cachedData: LiveLeaderboardData | null = null;
-let cachedAtMs = 0;
+type CacheEntry = {
+  data: LiveLeaderboardData;
+  cachedAtMs: number;
+};
 
-export function getCachedLiveLeaderboardData() {
-  return cachedData;
+const cache = new Map<string, CacheEntry>();
+
+export function getCachedLiveLeaderboardData(key: string) {
+  return cache.get(key)?.data ?? null;
 }
 
-export function getCachedLiveLeaderboardAgeMs(now = Date.now()) {
-  if (!cachedData) {
+export function getCachedLiveLeaderboardAgeMs(key: string, now = Date.now()) {
+  const entry = cache.get(key);
+  if (!entry) {
     return Number.POSITIVE_INFINITY;
   }
-
-  return now - cachedAtMs;
+  return now - entry.cachedAtMs;
 }
 
-export function setCachedLiveLeaderboardData(data: LiveLeaderboardData, now = Date.now()) {
-  cachedData = data;
-  cachedAtMs = now;
+export function setCachedLiveLeaderboardData(
+  key: string,
+  data: LiveLeaderboardData,
+  now = Date.now(),
+) {
+  cache.set(key, { data, cachedAtMs: now });
 }
