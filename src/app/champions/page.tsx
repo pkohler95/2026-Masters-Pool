@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { majors } from "@/data/majors";
-import { pastChampions } from "@/data/champions";
+import { getAllPastChampions } from "@/lib/champions";
 import styles from "./champions.module.css";
 
 export const metadata: Metadata = {
@@ -8,15 +8,16 @@ export const metadata: Metadata = {
   description: "Family pool winners from past major championships.",
 };
 
-export default function ChampionsPage() {
+export default async function ChampionsPage() {
+  const champions = await getAllPastChampions();
   const grouped = majors.map((major) => ({
     major,
-    rows: pastChampions
+    rows: champions
       .filter((c) => c.major === major.slug)
       .sort((a, b) => b.year - a.year),
   }));
 
-  const isEmpty = pastChampions.length === 0;
+  const isEmpty = champions.length === 0;
 
   return (
     <main className={styles.main}>
@@ -31,9 +32,10 @@ export default function ChampionsPage() {
       {isEmpty ? (
         <div className={styles.emptyState}>
           <p>
-            No past results recorded yet. Add entries to
-            <code className={styles.code}>src/data/champions.ts</code>
-            as you dig them up.
+            No past results recorded yet. Finalize a tournament by adding a
+            <code className={styles.code}>results</code>
+            block to its file, or add a manual entry to
+            <code className={styles.code}>src/data/champions.ts</code>.
           </p>
         </div>
       ) : (

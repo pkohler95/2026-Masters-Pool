@@ -8,6 +8,22 @@ export type EspnTournamentRef = {
   tournamentId: string;
 };
 
+export type FinalPlayerResult = {
+  name: string;
+  position: string;
+  score: string;
+  status: "made-cut" | "cut" | "wd" | "dq";
+  totalStrokes?: string;
+};
+
+export type TournamentResults = {
+  status: string;
+  finalizedAt: string;
+  winner: string;
+  winnerScore: string;
+  players: FinalPlayerResult[];
+};
+
 export type Tournament = {
   slug: MajorSlug;
   year: number;
@@ -20,6 +36,7 @@ export type Tournament = {
   timeZone: string;
   espn: EspnTournamentRef;
   teams: Team[];
+  results?: TournamentResults;
 };
 
 export type MajorSlug =

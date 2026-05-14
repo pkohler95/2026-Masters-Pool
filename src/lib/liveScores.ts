@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Tournament } from "@/data/types";
+import type { FinalPlayerResult, Tournament } from "@/data/types";
 import {
   getCachedLiveLeaderboardAgeMs,
   getCachedLiveLeaderboardData,
@@ -45,13 +45,14 @@ export type LivePoolEntry = {
 };
 
 export type LiveLeaderboardData = {
-  source: "espn-scrape";
+  source: "espn-scrape" | "frozen-results";
   tournament: string;
   tournamentSlug: string;
   tournamentYear: number;
   status: string;
   updatedAt: string;
   isFallback: boolean;
+  isFinal: boolean;
   entries: LivePoolEntry[];
 };
 
@@ -618,20 +619,27 @@ function toPlayerLookup(players: LivePlayerScore[]) {
   return playerMap;
 }
 
+const MISSED_CUT_RE = /^(CUT|WD|DQ|MDF)$/i;
+const MISSED_CUT_PENALTY = 100;
+
 function buildEntries(tournament: Tournament, players: LivePlayerScore[]) {
   const playerLookup = toPlayerLookup(players);
 
   const entries = tournament.teams.map((team) => {
     const scoredPlayers = team.players.map((name) => {
       const player = playerLookup.get(normalizePlayerName(name));
+      const score = player?.score ?? "—";
+      const missedCut = MISSED_CUT_RE.test(score);
 
       return {
         name,
         position: player?.position ?? "—",
-        score: player?.score ?? "—",
+        score,
         thru: player?.thru ?? "No data",
         status: player?.status ?? "unavailable",
-        _scoreValue: player?.scoreValue ?? 0,
+        _scoreValue: missedCut
+          ? MISSED_CUT_PENALTY
+          : (player?.scoreValue ?? 0),
       };
     });
 
@@ -678,6 +686,7 @@ function createFallbackLeaderboard(tournament: Tournament): LiveLeaderboardData 
     status: "Live scores unavailable",
     updatedAt: new Date().toISOString(),
     isFallback: true,
+    isFinal: false,
     entries: tournament.teams.map((team, rank) => ({
       rank: rank + 1,
       owner: team.owner,
@@ -692,6 +701,46 @@ function createFallbackLeaderboard(tournament: Tournament): LiveLeaderboardData 
       totalScore: "—",
       totalScoreValue: 0,
     })),
+  };
+}
+
+function finalResultToLivePlayerScore(result: FinalPlayerResult): LivePlayerScore {
+  const thru =
+    result.status === "made-cut"
+      ? "F"
+      : result.status === "cut"
+        ? "CUT"
+        : result.status === "wd"
+          ? "WD"
+          : "DQ";
+
+  return {
+    name: result.name,
+    normalizedName: normalizePlayerName(result.name),
+    position: result.position,
+    score: result.score,
+    scoreValue: toScoreValue(result.score),
+    today: null,
+    thru,
+    totalStrokes: result.totalStrokes ?? null,
+    status: "finished",
+  };
+}
+
+function buildFrozenLeaderboard(tournament: Tournament): LiveLeaderboardData {
+  const results = tournament.results!;
+  const livePlayers = results.players.map(finalResultToLivePlayerScore);
+
+  return {
+    source: "frozen-results",
+    tournament: tournament.name,
+    tournamentSlug: tournament.slug,
+    tournamentYear: tournament.year,
+    status: `${results.status} · ${results.winner} ${results.winnerScore}`,
+    updatedAt: results.finalizedAt,
+    isFallback: false,
+    isFinal: true,
+    entries: buildEntries(tournament, livePlayers),
   };
 }
 
@@ -754,6 +803,10 @@ function cacheKey(tournament: Tournament) {
 export async function getLiveLeaderboardData(
   tournament: Tournament,
 ): Promise<LiveLeaderboardData> {
+  if (tournament.results) {
+    return buildFrozenLeaderboard(tournament);
+  }
+
   const now = new Date();
   const key = cacheKey(tournament);
   const cachedData = getCachedLiveLeaderboardData(key);
@@ -786,6 +839,7 @@ export async function getLiveLeaderboardData(
       status: parsed.status,
       updatedAt: new Date().toISOString(),
       isFallback: false,
+      isFinal: false,
       entries: buildEntries(tournament, parsed.players),
     };
 
