@@ -63,5 +63,9 @@ export const pgaChampionship2026: Tournament = {
       owner: "Peter Kohler",
       players: ["Cameron Young", "Xander Schauffele", "Rickie Fowler", "Akshay Bhatia", "Nicolai Højgaard", "Kristoffer Reitan"],
     },
+    {
+      owner: "Liz Kohler",
+      players: ["Jon Rahm", "Justin Rose", "Viktor Hovland", "Patrick Reed", "Harris English", "Harry Hall"],
+    },
   ],
 };
