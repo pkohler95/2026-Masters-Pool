@@ -11,15 +11,18 @@ interface FamilyRowProps {
 
 export default function FamilyRow({ entry }: FamilyRowProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const isCut = entry.totalScore === "CUT";
 
   return (
-    <div className={`${styles.rowContainer} ${isExpanded ? styles.expanded : ""}`}>
+    <div
+      className={`${styles.rowContainer} ${isExpanded ? styles.expanded : ""} ${isCut ? styles.cut : ""}`}
+    >
       <button
         className={styles.rowHeader}
         onClick={() => setIsExpanded(!isExpanded)}
         aria-expanded={isExpanded}
       >
-        <div className={styles.rankBadge}>{entry.rank}</div>
+        <div className={styles.rankBadge}>{isCut ? "—" : entry.rank}</div>
         <div className={styles.ownerInfo}>
           <h2 className={styles.ownerName}>{entry.owner}</h2>
         </div>

@@ -17,6 +17,24 @@
   border-color: var(--color-sand);
 }
 
+.rowContainer.cut {
+  background: #f6f6f4;
+  opacity: 0.78;
+}
+
+.rowContainer.cut .rankBadge {
+  background: #9aa3a0;
+  box-shadow: none;
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.rowContainer.cut .scoreValue {
+  color: #b13a30;
+  letter-spacing: 0.08em;
+  font-size: 1rem;
+}
+
 .rowHeader {
   width: 100%;
   display: flex;

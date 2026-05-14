@@ -620,16 +620,21 @@ function toPlayerLookup(players: LivePlayerScore[]) {
 }
 
 const MISSED_CUT_RE = /^(CUT|WD|DQ|MDF)$/i;
-const MISSED_CUT_PENALTY = 100;
+const MISSED_CUT_SORT_VALUE = 1_000;
+const TEAM_CUT_SORT_VALUE = 1_000_000;
 
 function buildEntries(tournament: Tournament, players: LivePlayerScore[]) {
   const playerLookup = toPlayerLookup(players);
 
   const entries = tournament.teams.map((team) => {
+    let missedCutCount = 0;
     const scoredPlayers = team.players.map((name) => {
       const player = playerLookup.get(normalizePlayerName(name));
       const score = player?.score ?? "—";
       const missedCut = MISSED_CUT_RE.test(score);
+      if (missedCut) {
+        missedCutCount += 1;
+      }
 
       return {
         name,
@@ -638,25 +643,29 @@ function buildEntries(tournament: Tournament, players: LivePlayerScore[]) {
         thru: player?.thru ?? "No data",
         status: player?.status ?? "unavailable",
         _scoreValue: missedCut
-          ? MISSED_CUT_PENALTY
+          ? MISSED_CUT_SORT_VALUE
           : (player?.scoreValue ?? 0),
       };
     });
 
+    const teamCut = missedCutCount > team.players.length - 4;
     const sortedForTop4 = [...scoredPlayers].sort((a, b) => a._scoreValue - b._scoreValue);
     const top4CountedNames = new Set(sortedForTop4.slice(0, 4).map((p) => p.name));
 
-    const totalScoreValue = sortedForTop4.slice(0, 4).reduce((sum, p) => sum + p._scoreValue, 0);
+    const totalScoreValue = teamCut
+      ? TEAM_CUT_SORT_VALUE
+      : sortedForTop4.slice(0, 4).reduce((sum, p) => sum + p._scoreValue, 0);
 
     const finalPlayers = scoredPlayers.map(({ _scoreValue, ...rest }) => ({
       ...rest,
-      isScoring: top4CountedNames.has(rest.name),
+      isScoring: !teamCut && top4CountedNames.has(rest.name),
     })) satisfies PoolPlayerScore[];
 
     return {
       owner: team.owner,
       players: finalPlayers,
       totalScoreValue,
+      teamCut,
     };
   });
 
@@ -672,7 +681,7 @@ function buildEntries(tournament: Tournament, players: LivePlayerScore[]) {
     rank: index + 1,
     owner: entry.owner,
     players: entry.players,
-    totalScore: formatScore(entry.totalScoreValue),
+    totalScore: entry.teamCut ? "CUT" : formatScore(entry.totalScoreValue),
     totalScoreValue: entry.totalScoreValue,
   }));
 }
