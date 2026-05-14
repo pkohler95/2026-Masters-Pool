@@ -8,13 +8,6 @@ import {
 } from "@/lib/liveScoreCache";
 import { getScrapeIntervalMs, isTournamentActive } from "@/lib/scrapeSchedule";
 
-const SCORE_TOKEN_RE = /^(E|[+-]\d+|--)$/;
-const POSITION_TOKEN_RE = /^(T?\d+|-)$/;
-const THRU_TOKEN_RE = /^(\d+|F|WD|DQ|CUT|MDF|\*)$/;
-const TIME_TOKEN_RE = /^\d{1,2}:\d{2}$/;
-const TIME_WITH_PERIOD_RE = /^\d{1,2}:\d{2}\s?(AM|PM)$/i;
-const COUNTRY_IMAGE_PREFIX_RE = /^Image:\s*[A-Za-z .'-]+/;
-
 export type LivePlayerScore = {
   name: string;
   normalizedName: string;
@@ -45,7 +38,7 @@ export type LivePoolEntry = {
 };
 
 export type LiveLeaderboardData = {
-  source: "espn-scrape" | "frozen-results";
+  source: "espn-api" | "frozen-results";
   tournament: string;
   tournamentSlug: string;
   tournamentYear: number;
@@ -56,46 +49,58 @@ export type LiveLeaderboardData = {
   entries: LivePoolEntry[];
 };
 
-type ParsedLeaderboard = {
-  tournament: string;
-  status: string;
-  players: LivePlayerScore[];
+type EspnApiAthlete = {
+  displayName?: string;
+  amateur?: boolean;
 };
 
-type EspnCompetitor = {
+type EspnApiStatusType = {
+  state?: "in" | "pre" | "post" | string;
+  description?: string;
+  shortDetail?: string;
+};
+
+type EspnApiStatus = {
+  thru?: number;
+  displayThru?: string;
+  teeTime?: string;
+  position?: {
+    displayName?: string;
+    id?: string;
+    isTie?: boolean;
+  };
+  type?: EspnApiStatusType;
+};
+
+type EspnApiStatistic = {
   name?: string;
-  pos?: string;
-  status?: string;
-  thru?: number | string;
-  today?: string;
-  toPar?: string;
-  tot?: number | string;
-  tee?: string;
+  value?: number;
+  displayValue?: string;
 };
 
-type EspnLeaderboard = {
+type EspnApiCompetitor = {
+  id?: string;
+  amateur?: boolean;
+  status?: EspnApiStatus;
+  score?: { value?: number; displayValue?: string };
+  statistics?: EspnApiStatistic[];
+  athlete?: EspnApiAthlete;
+};
+
+type EspnApiCompetition = {
+  status?: { type?: { detail?: string; shortDetail?: string } };
+  competitors?: EspnApiCompetitor[];
+};
+
+type EspnApiEvent = {
   name?: string;
-  roundStatusDetail?: string;
-  competitors?: EspnCompetitor[];
+  competitions?: EspnApiCompetition[];
+  status?: { type?: { state?: string; description?: string } };
 };
 
-type SearchablePoolPlayer = {
-  displayName: string;
-  normalizedName: string;
-  asciiName: string;
+type EspnApiResponse = {
+  events?: EspnApiEvent[];
 };
-
-function decodeHtmlEntities(input: string) {
-  return input
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;|&apos;/gi, "'")
-    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, code) =>
-      String.fromCodePoint(Number.parseInt(code, 16)),
-    );
-}
 
 function normalizeWhitespace(value: string) {
   return value.replace(/\s+/g, " ").trim();
@@ -105,10 +110,6 @@ function cleanPlayerName(name: string) {
   return normalizeWhitespace(name.replace(/\s*\(a\)$/i, ""));
 }
 
-function stripCountryPrefix(token: string) {
-  return normalizeWhitespace(token.replace(COUNTRY_IMAGE_PREFIX_RE, ""));
-}
-
 function normalizePlayerName(name: string) {
   return cleanPlayerName(name)
     .normalize("NFD")
@@ -116,13 +117,6 @@ function normalizePlayerName(name: string) {
     .replace(/[^a-zA-Z0-9 ]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
-    .toLowerCase();
-}
-
-function toAsciiLower(value: string) {
-  return value
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
     .toLowerCase();
 }
 
@@ -151,471 +145,110 @@ function formatScore(value: number | null) {
   return value > 0 ? `+${value}` : `${value}`;
 }
 
-function normalizeEspnScore(score: string | undefined) {
-  if (!score) {
+function formatScoreFromValue(value: number | null | undefined) {
+  if (value === null || value === undefined) {
     return "--";
   }
-
-  if (score === "E") {
-    return "E";
-  }
-
-  if (/^[+-]\d+$/.test(score) || score === "--") {
-    return score;
-  }
-
-  if (/^\d+$/.test(score)) {
-    return `+${score}`;
-  }
-
-  return "--";
+  return formatScore(value);
 }
 
-function formatEspnThru(competitor: EspnCompetitor, timeZone: string) {
-  if (competitor.status === "scheduled" && competitor.tee) {
-    const teeDate = new Date(competitor.tee);
-    return teeDate.toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-      timeZone,
-    });
-  }
-
-  if (competitor.status === "cut") {
-    return "CUT";
-  }
-
-  if (competitor.status === "dq") {
-    return "DQ";
-  }
-
-  if (competitor.status === "wd") {
-    return "WD";
-  }
-
-  if (competitor.thru === 18) {
-    return "F";
-  }
-
-  if (competitor.thru === 0 && competitor.status === "in") {
-    return "1";
-  }
-
-  if (competitor.thru != null && competitor.thru !== "") {
-    return `${competitor.thru}`;
-  }
-
-  return "--";
+function formatTeeTime(teeTime: string, timeZone: string) {
+  return new Date(teeTime).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone,
+  });
 }
 
-function mapEspnStatus(competitor: EspnCompetitor): LivePlayerScore["status"] {
-  if (competitor.status === "scheduled") {
-    return "scheduled";
-  }
-
-  if (competitor.status === "in" || competitor.status === "active") {
-    return competitor.thru === 18 ? "finished" : "active";
-  }
-
-  if (competitor.status === "cut" || competitor.status === "dq" || competitor.status === "wd") {
-    return "finished";
-  }
-
-  return "unavailable";
+function pickStatistic(stats: EspnApiStatistic[] | undefined, name: string) {
+  return stats?.find((s) => s.name === name);
 }
 
-function readTimeToken(tokens: string[], index: number) {
-  const current = tokens[index];
-  if (!current) {
-    return null;
-  }
-
-  if (TIME_WITH_PERIOD_RE.test(current)) {
-    return { value: current.toUpperCase(), nextIndex: index + 1 };
-  }
-
-  const next = tokens[index + 1];
-  if (TIME_TOKEN_RE.test(current) && /^(AM|PM)$/i.test(next ?? "")) {
-    return {
-      value: `${current} ${next.toUpperCase()}`,
-      nextIndex: index + 2,
-    };
-  }
-
-  return null;
-}
-
-function getPlayerStatus(score: string, thru: string): LivePlayerScore["status"] {
-  if (score === "--") {
-    return "scheduled";
-  }
-
-  if (thru === "F") {
-    return "finished";
-  }
-
-  return "active";
-}
-
-function stripHtmlToTokens(html: string) {
-  const text = decodeHtmlEntities(
-    html
-      .replace(/<script[\s\S]*?<\/script>/gi, "\n")
-      .replace(/<style[\s\S]*?<\/style>/gi, "\n")
-      .replace(/<!--[\s\S]*?-->/g, "\n")
-      .replace(/<[^>]+>/g, "\n"),
-  );
-
-  return text
-    .split("\n")
-    .map(normalizeWhitespace)
-    .filter(Boolean);
-}
-
-function getUniquePoolPlayers(tournament: Tournament): SearchablePoolPlayer[] {
-  const uniquePlayers = new Map<string, SearchablePoolPlayer>();
-
-  for (const team of tournament.teams) {
-    for (const playerName of team.players) {
-      const normalizedName = normalizePlayerName(playerName);
-
-      if (!uniquePlayers.has(normalizedName)) {
-        uniquePlayers.set(normalizedName, {
-          displayName: playerName,
-          normalizedName,
-          asciiName: toAsciiLower(playerName),
-        });
-      }
-    }
-  }
-
-  return [...uniquePlayers.values()];
-}
-
-function extractEspnLeaderboardData(html: string): EspnLeaderboard | null {
-  const match = html.match(/window\['__espnfitt__'\]=(\{.*\});<\/script>/);
-  if (!match) {
-    return null;
-  }
-
-  const data = JSON.parse(match[1]) as {
-    page?: {
-      content?: {
-        leaderboard?: EspnLeaderboard;
-      };
-    };
-  };
-
-  return data.page?.content?.leaderboard ?? null;
-}
-
-function parseLeaderboardFromEspnData(
-  leaderboard: EspnLeaderboard,
+function mapCompetitorToLivePlayer(
+  c: EspnApiCompetitor,
   tournament: Tournament,
-): ParsedLeaderboard | null {
-  const competitors = leaderboard.competitors ?? [];
-  if (competitors.length === 0) {
+): LivePlayerScore | null {
+  const name = c.athlete?.displayName;
+  if (!name) {
     return null;
   }
 
-  const players = competitors
-    .filter((competitor) => competitor.name)
-    .map((competitor) => {
-      const name = cleanPlayerName(competitor.name!);
-      const score = normalizeEspnScore(competitor.toPar);
+  const cleanedName = cleanPlayerName(name);
+  const state = c.status?.type?.state;
+  const desc = (c.status?.type?.description ?? "").toLowerCase();
+  const position = c.status?.position?.displayName;
+  const displayThru = c.status?.displayThru;
+  const thruNumber = c.status?.thru;
+  const teeTime = c.status?.teeTime;
 
-      return {
-        name,
-        normalizedName: normalizePlayerName(name),
-        position: competitor.pos && competitor.pos !== "-" ? competitor.pos : "—",
-        score,
-        scoreValue: toScoreValue(score),
-        today: competitor.today ? normalizeEspnScore(competitor.today) : null,
-        thru: formatEspnThru(competitor, tournament.timeZone),
-        totalStrokes:
-          competitor.tot != null && competitor.tot !== "" ? `${competitor.tot}` : null,
-        status: mapEspnStatus(competitor),
-      } satisfies LivePlayerScore;
-    });
+  const scoreToParStat = pickStatistic(c.statistics, "scoreToPar");
+  let score = scoreToParStat?.displayValue ?? "--";
+  let scoreValue: number | null = null;
+  if (scoreToParStat?.value !== undefined && scoreToParStat.value !== null) {
+    scoreValue = Number(scoreToParStat.value);
+  } else if (score !== "--") {
+    scoreValue = toScoreValue(score);
+  }
+
+  let status: LivePlayerScore["status"];
+  let thru: string;
+
+  if (desc.includes("withdrawn") || desc === "wd") {
+    status = "finished";
+    thru = "WD";
+    score = "WD";
+    scoreValue = null;
+  } else if (desc.includes("disqualified") || desc === "dq") {
+    status = "finished";
+    thru = "DQ";
+    score = "DQ";
+    scoreValue = null;
+  } else if (desc === "cut") {
+    status = "finished";
+    thru = "CUT";
+    score = "CUT";
+    scoreValue = null;
+  } else if (state === "pre" || (thruNumber === 0 && state !== "in" && state !== "post")) {
+    status = "scheduled";
+    thru = teeTime ? formatTeeTime(teeTime, tournament.timeZone) : (displayThru ?? "--");
+    score = score === "--" || score === "E" ? "--" : score;
+    if (score === "--") {
+      scoreValue = null;
+    }
+  } else if (state === "post" || thruNumber === 18 || displayThru === "F") {
+    status = "finished";
+    thru = "F";
+  } else {
+    status = "active";
+    thru = displayThru ?? (thruNumber !== undefined ? `${thruNumber}` : "--");
+  }
+
+  const normalizedScore =
+    scoreValue !== null && scoreValue !== undefined
+      ? formatScoreFromValue(scoreValue)
+      : score;
 
   return {
-    tournament: leaderboard.name ?? tournament.name,
-    status: leaderboard.roundStatusDetail ?? "Live scores unavailable",
-    players,
+    name: cleanedName,
+    normalizedName: normalizePlayerName(cleanedName),
+    position: position && position !== "-" ? position : "—",
+    score: normalizedScore,
+    scoreValue,
+    today: null,
+    thru,
+    totalStrokes:
+      c.score?.value !== undefined && c.score.value !== 0
+        ? `${c.score.value}`
+        : null,
+    status,
   };
-}
-
-function extractTournament(tokens: string[], tournament: Tournament) {
-  const heading = `# ${tournament.name}`;
-  const titleIndex = tokens.findIndex((token) => token === heading);
-  if (titleIndex >= 0) {
-    return tokens[titleIndex].replace(/^#\s*/, "");
-  }
-
-  return tournament.name;
-}
-
-function extractStatus(tokens: string[]) {
-  const roundLine = tokens.find((token) => /^Round \d+ - /i.test(token));
-  if (roundLine) {
-    return roundLine;
-  }
-
-  if (tokens.includes("Tournament Field")) {
-    return "Tournament Field";
-  }
-
-  return "Live scoring unavailable";
-}
-
-function parsePlayersFromTokens(tokens: string[]) {
-  const headerIndex = tokens.findIndex((token) =>
-    token.includes("POS PLAYER SCORE TODAY THRU"),
-  );
-
-  if (headerIndex < 0) {
-    return parseTournamentFieldPlayers(tokens);
-  }
-
-  const players: LivePlayerScore[] = [];
-
-  for (let index = headerIndex + 1; index < tokens.length; ) {
-    const token = tokens[index];
-
-    if (
-      token === "Glossary" ||
-      token === "Latest Golf Videos" ||
-      token === "Golf News"
-    ) {
-      break;
-    }
-
-    if (!POSITION_TOKEN_RE.test(token)) {
-      index += 1;
-      continue;
-    }
-
-    const position = token;
-    const rawName = tokens[index + 1];
-
-    if (!rawName) {
-      break;
-    }
-
-    let cursor = index + 2;
-    const score = SCORE_TOKEN_RE.test(tokens[cursor] ?? "") ? tokens[cursor] : "--";
-    if (cursor < tokens.length) {
-      cursor += 1;
-    }
-
-    let today: string | null = null;
-    if (SCORE_TOKEN_RE.test(tokens[cursor] ?? "")) {
-      today = tokens[cursor];
-      cursor += 1;
-    }
-
-    let thru = "--";
-    const timeToken = readTimeToken(tokens, cursor);
-    if (timeToken) {
-      thru = timeToken.value;
-      cursor = timeToken.nextIndex;
-    } else if (THRU_TOKEN_RE.test(tokens[cursor] ?? "")) {
-      thru = tokens[cursor];
-      cursor += 1;
-    }
-
-    let totalStrokes: string | null = null;
-    if (/^\d+$/.test(tokens[cursor] ?? "")) {
-      totalStrokes = tokens[cursor];
-      cursor += 1;
-    }
-
-    const name = cleanPlayerName(rawName);
-    players.push({
-      name,
-      normalizedName: normalizePlayerName(name),
-      position,
-      score,
-      scoreValue: toScoreValue(score),
-      today,
-      thru,
-      totalStrokes,
-      status: getPlayerStatus(score, thru),
-    });
-
-    index = cursor;
-  }
-
-  return players;
-}
-
-function parseRowTail(tail: string) {
-  const normalizedTail = normalizeWhitespace(tail);
-  const scheduledMatch = normalizedTail.match(
-    /^(--)\s*(\d{1,2}:\d{2}\s?(?:AM|PM))[-\s]*$/i,
-  );
-
-  if (scheduledMatch) {
-    return {
-      position: "—",
-      score: "--",
-      today: null,
-      thru: scheduledMatch[2].toUpperCase(),
-      totalStrokes: null,
-      status: "scheduled" as const,
-    };
-  }
-
-  const liveMatch = normalizedTail.match(
-    /^(E|--|[+-]\d+)\s*(E|--|[+-]\d+)\s*(\d{1,2}:\d{2}\s?(?:AM|PM)|F|WD|DQ|CUT|MDF|\*|\d+)\s*-*\s*(\d+)?\s*-*$/,
-  );
-
-  if (!liveMatch) {
-    return null;
-  }
-
-  const [, score, today, thru, totalStrokes] = liveMatch;
-  return {
-    position: "—",
-    score,
-    today,
-    thru: thru.toUpperCase(),
-    totalStrokes: totalStrokes ?? null,
-    status: getPlayerStatus(score, thru.toUpperCase()),
-  };
-}
-
-function parsePoolPlayersFromLines(lines: string[], tournament: Tournament) {
-  const headerIndex = lines.findIndex((line) =>
-    line.includes("POS PLAYER SCORE TODAY THRU"),
-  );
-  const fieldIndex = lines.findIndex((line) => line.includes("PLAYER TEE TIME"));
-  const startIndex = headerIndex >= 0 ? headerIndex + 1 : fieldIndex >= 0 ? fieldIndex + 1 : -1;
-
-  if (startIndex < 0) {
-    return [];
-  }
-
-  const uniquePoolPlayers = getUniquePoolPlayers(tournament);
-  const parsedPlayers = new Map<string, LivePlayerScore>();
-
-  for (const rawLine of lines.slice(startIndex)) {
-    if (
-      rawLine === "Glossary" ||
-      rawLine === "Latest Golf Videos" ||
-      rawLine === "Golf News"
-    ) {
-      break;
-    }
-
-    const line = stripCountryPrefix(rawLine);
-    const asciiLine = toAsciiLower(line);
-
-    for (const poolPlayer of uniquePoolPlayers) {
-      if (parsedPlayers.has(poolPlayer.normalizedName)) {
-        continue;
-      }
-
-      const rawNameIndex = line.indexOf(poolPlayer.displayName);
-      const asciiNameIndex =
-        rawNameIndex >= 0 ? -1 : asciiLine.indexOf(poolPlayer.asciiName);
-
-      if (rawNameIndex < 0 && asciiNameIndex < 0) {
-        continue;
-      }
-
-      const tail =
-        rawNameIndex >= 0
-          ? line.slice(rawNameIndex + poolPlayer.displayName.length)
-          : line.slice(asciiNameIndex + poolPlayer.asciiName.length);
-      const tailData = parseRowTail(tail);
-
-      if (!tailData) {
-        continue;
-      }
-
-      const positionMatch = line.match(/^(T?\d+|-)/);
-      parsedPlayers.set(poolPlayer.normalizedName, {
-        name: poolPlayer.displayName,
-        normalizedName: poolPlayer.normalizedName,
-        position:
-          headerIndex >= 0
-            ? positionMatch?.[1] && positionMatch[1] !== "-"
-              ? positionMatch[1]
-              : "—"
-            : "—",
-        score: tailData.score,
-        scoreValue: toScoreValue(tailData.score),
-        today: tailData.today,
-        thru: tailData.thru,
-        totalStrokes: tailData.totalStrokes,
-        status: tailData.status,
-      });
-    }
-  }
-
-  return [...parsedPlayers.values()];
-}
-
-function parseTournamentFieldPlayers(tokens: string[]) {
-  const headerIndex = tokens.findIndex((token) =>
-    token.includes("PLAYER TEE TIME"),
-  );
-
-  if (headerIndex < 0) {
-    throw new Error("Could not find ESPN leaderboard table.");
-  }
-
-  const players: LivePlayerScore[] = [];
-
-  for (let index = headerIndex + 1; index < tokens.length; ) {
-    const rawPlayerToken = tokens[index];
-
-    if (
-      rawPlayerToken === "Glossary" ||
-      rawPlayerToken === "Latest Golf Videos" ||
-      rawPlayerToken === "Golf News"
-    ) {
-      break;
-    }
-
-    const teeTime = readTimeToken(tokens, index + 1);
-    if (!teeTime) {
-      index += 1;
-      continue;
-    }
-
-    const name = cleanPlayerName(stripCountryPrefix(rawPlayerToken));
-    if (!name) {
-      index = teeTime.nextIndex;
-      continue;
-    }
-
-    players.push({
-      name,
-      normalizedName: normalizePlayerName(name),
-      position: "—",
-      score: "--",
-      scoreValue: null,
-      today: null,
-      thru: teeTime.value,
-      totalStrokes: null,
-      status: "scheduled",
-    });
-
-    index = teeTime.nextIndex;
-  }
-
-  return players;
 }
 
 function toPlayerLookup(players: LivePlayerScore[]) {
   const playerMap = new Map<string, LivePlayerScore>();
-
   for (const player of players) {
     playerMap.set(player.normalizedName, player);
   }
-
   return playerMap;
 }
 
@@ -688,7 +321,7 @@ function buildEntries(tournament: Tournament, players: LivePlayerScore[]) {
 
 function createFallbackLeaderboard(tournament: Tournament): LiveLeaderboardData {
   return {
-    source: "espn-scrape",
+    source: "espn-api",
     tournament: tournament.name,
     tournamentSlug: tournament.slug,
     tournamentYear: tournament.year,
@@ -753,54 +386,60 @@ function buildFrozenLeaderboard(tournament: Tournament): LiveLeaderboardData {
   };
 }
 
-function buildEspnUrl(tournament: Tournament) {
-  const envOverride = process.env[`ESPN_LEADERBOARD_URL_${tournament.slug.replace(/-/g, "_").toUpperCase()}`];
+function buildEspnApiUrl(tournament: Tournament) {
+  const slugEnvKey = tournament.slug.replace(/-/g, "_").toUpperCase();
+  const envOverride = process.env[`ESPN_LEADERBOARD_URL_${slugEnvKey}`];
   if (envOverride) {
     return envOverride;
   }
-  return `https://www.espn.com/golf/leaderboard?season=${tournament.espn.season}&tournamentId=${tournament.espn.tournamentId}`;
+  return `https://site.web.api.espn.com/apis/site/v2/sports/golf/leaderboard?event=${tournament.espn.tournamentId}`;
 }
 
-async function fetchLeaderboardHtml(tournament: Tournament) {
-  const response = await fetch(buildEspnUrl(tournament), {
-    headers: {
-      "user-agent":
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
-      accept:
-        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    },
+async function fetchEspnLeaderboard(tournament: Tournament): Promise<EspnApiResponse> {
+  const response = await fetch(buildEspnApiUrl(tournament), {
+    headers: { accept: "application/json" },
     cache: "no-store",
   });
 
   if (!response.ok) {
-    throw new Error(`ESPN request failed with ${response.status}.`);
+    throw new Error(`ESPN API request failed with ${response.status}.`);
   }
 
-  return response.text();
+  return (await response.json()) as EspnApiResponse;
 }
 
-function parseLeaderboard(html: string, tournament: Tournament): ParsedLeaderboard {
-  const espnLeaderboard = extractEspnLeaderboardData(html);
-  const parsedFromEspnData = espnLeaderboard
-    ? parseLeaderboardFromEspnData(espnLeaderboard, tournament)
-    : null;
-
-  if (parsedFromEspnData) {
-    return parsedFromEspnData;
+function parseEspnApi(
+  payload: EspnApiResponse,
+  tournament: Tournament,
+): { status: string; tournament: string; players: LivePlayerScore[] } {
+  const event = payload.events?.[0];
+  if (!event) {
+    throw new Error("ESPN API returned no events.");
   }
 
-  const tokens = stripHtmlToTokens(html);
-  const playersFromLines = parsePoolPlayersFromLines(tokens, tournament);
-  const players =
-    playersFromLines.length > 0 ? playersFromLines : parsePlayersFromTokens(tokens);
-
-  if (players.length === 0) {
-    throw new Error("ESPN leaderboard did not contain any player rows.");
+  const competition = event.competitions?.[0];
+  const competitors = competition?.competitors ?? [];
+  if (competitors.length === 0) {
+    throw new Error("ESPN API returned no competitors.");
   }
+
+  const players: LivePlayerScore[] = [];
+  for (const c of competitors) {
+    const mapped = mapCompetitorToLivePlayer(c, tournament);
+    if (mapped) {
+      players.push(mapped);
+    }
+  }
+
+  const statusDetail =
+    competition?.status?.type?.detail ??
+    competition?.status?.type?.shortDetail ??
+    event.status?.type?.description ??
+    "Live scoring unavailable";
 
   return {
-    tournament: extractTournament(tokens, tournament),
-    status: extractStatus(tokens),
+    status: statusDetail,
+    tournament: event.name ?? tournament.name,
     players,
   };
 }
@@ -838,10 +477,10 @@ export async function getLiveLeaderboardData(
   }
 
   try {
-    const html = await fetchLeaderboardHtml(tournament);
-    const parsed = parseLeaderboard(html, tournament);
+    const payload = await fetchEspnLeaderboard(tournament);
+    const parsed = parseEspnApi(payload, tournament);
     const data: LiveLeaderboardData = {
-      source: "espn-scrape",
+      source: "espn-api",
       tournament: parsed.tournament,
       tournamentSlug: tournament.slug,
       tournamentYear: tournament.year,
