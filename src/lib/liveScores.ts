@@ -263,21 +263,26 @@ function buildEntries(tournament: Tournament, players: LivePlayerScore[]) {
     let missedCutCount = 0;
     const scoredPlayers = team.players.map((name) => {
       const player = playerLookup.get(normalizePlayerName(name));
-      const score = player?.score ?? "—";
-      const missedCut = MISSED_CUT_RE.test(score);
+      // A player on a team but absent from the live feed has withdrawn
+      // (or wasn't in the field) — they should not count toward the top 4.
+      const playerMissing = !player;
+      const score = playerMissing ? "WD" : player.score;
+      const missedCut = playerMissing || MISSED_CUT_RE.test(score);
       if (missedCut) {
         missedCutCount += 1;
       }
 
       return {
         name,
-        position: player?.position ?? "—",
+        position: playerMissing ? "—" : player.position,
         score,
-        thru: player?.thru ?? "No data",
-        status: player?.status ?? "unavailable",
+        thru: playerMissing ? "WD" : player.thru,
+        status: playerMissing
+          ? ("finished" as const)
+          : player.status,
         _scoreValue: missedCut
           ? MISSED_CUT_SORT_VALUE
-          : (player?.scoreValue ?? 0),
+          : (player.scoreValue ?? 0),
       };
     });
 
