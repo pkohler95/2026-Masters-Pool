@@ -24,6 +24,8 @@ async function derivePastChampionFromTournament(
     poolWinner: winner.owner,
     poolWinnerScore: winner.totalScore,
     tournamentWinner: tournament.results.winner,
+    venue: tournament.venue,
+    location: tournament.location,
   };
 }
 

@@ -60,4 +60,6 @@ export type PastChampion = {
   poolWinner: string;
   poolWinnerScore?: string;
   tournamentWinner?: string;
+  venue?: string;
+  location?: string;
 };

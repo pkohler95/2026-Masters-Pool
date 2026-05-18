@@ -77,6 +77,18 @@
   border-bottom: none;
 }
 
+.venueCell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  line-height: 1.3;
+}
+
+.venueLocation {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
 .emptyRow {
   color: var(--text-muted);
   font-style: italic;

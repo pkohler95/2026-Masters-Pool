@@ -55,6 +55,7 @@ export default async function ChampionsPage() {
                       <th>Pool Champion</th>
                       <th>Score</th>
                       <th>Tournament Winner</th>
+                      <th>Venue</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -64,6 +65,18 @@ export default async function ChampionsPage() {
                         <td>{row.poolWinner}</td>
                         <td>{row.poolWinnerScore ?? "—"}</td>
                         <td>{row.tournamentWinner ?? "—"}</td>
+                        <td className={styles.venueCell}>
+                          {row.venue ? (
+                            <>
+                              <span>{row.venue}</span>
+                              {row.location ? (
+                                <span className={styles.venueLocation}>{row.location}</span>
+                              ) : null}
+                            </>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
