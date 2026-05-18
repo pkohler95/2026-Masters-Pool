@@ -203,7 +203,7 @@ function mapCompetitorToLivePlayer(
     thru = "DQ";
     score = "DQ";
     scoreValue = null;
-  } else if (desc === "cut") {
+  } else if (desc === "cut" || desc.includes("missed cut")) {
     status = "finished";
     thru = "CUT";
     score = "CUT";
