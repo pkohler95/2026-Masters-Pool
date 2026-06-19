@@ -7,9 +7,10 @@ import styles from "./FamilyRow.module.css";
 
 interface FamilyRowProps {
   entry: LivePoolEntry;
+  accent: string;
 }
 
-export default function FamilyRow({ entry }: FamilyRowProps) {
+export default function FamilyRow({ entry, accent }: FamilyRowProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const isCut = entry.totalScore === "CUT";
 
@@ -22,7 +23,12 @@ export default function FamilyRow({ entry }: FamilyRowProps) {
         onClick={() => setIsExpanded(!isExpanded)}
         aria-expanded={isExpanded}
       >
-        <div className={styles.rankBadge}>{isCut ? "—" : entry.rank}</div>
+        <div
+          className={styles.rankBadge}
+          style={isCut ? undefined : { background: accent }}
+        >
+          {isCut ? "—" : `${entry.isTie ? "T" : ""}${entry.rank}`}
+        </div>
         <div className={styles.ownerInfo}>
           <h2 className={styles.ownerName}>{entry.owner}</h2>
         </div>

@@ -31,6 +31,7 @@ export type PoolPlayerScore = {
 
 export type LivePoolEntry = {
   rank: number;
+  isTie: boolean;
   owner: string;
   players: PoolPlayerScore[];
   totalScore: string;
@@ -316,13 +317,25 @@ function buildEntries(tournament: Tournament, players: LivePlayerScore[]) {
     return left.owner.localeCompare(right.owner);
   });
 
-  return sortedEntries.map((entry, index) => ({
-    rank: index + 1,
-    owner: entry.owner,
-    players: entry.players,
-    totalScore: entry.teamCut ? "CUT" : formatScore(entry.totalScoreValue),
-    totalScoreValue: entry.totalScoreValue,
-  }));
+  return sortedEntries.map((entry, index) => {
+    // Standard golf ranking: teams sharing a score share a position, tagged
+    // "T" (e.g. two teams at -11 are both T2, and the next score is 4th).
+    const sameScoreCount = sortedEntries.filter(
+      (e) => !e.teamCut && e.totalScoreValue === entry.totalScoreValue,
+    ).length;
+    const betterCount = sortedEntries.filter(
+      (e) => !e.teamCut && e.totalScoreValue < entry.totalScoreValue,
+    ).length;
+
+    return {
+      rank: entry.teamCut ? index + 1 : betterCount + 1,
+      isTie: !entry.teamCut && sameScoreCount > 1,
+      owner: entry.owner,
+      players: entry.players,
+      totalScore: entry.teamCut ? "CUT" : formatScore(entry.totalScoreValue),
+      totalScoreValue: entry.totalScoreValue,
+    };
+  });
 }
 
 function createFallbackLeaderboard(tournament: Tournament): LiveLeaderboardData {
@@ -338,6 +351,7 @@ function createFallbackLeaderboard(tournament: Tournament): LiveLeaderboardData 
     isFinal: false,
     entries: tournament.teams.map((team, rank) => ({
       rank: rank + 1,
+      isTie: false,
       owner: team.owner,
       players: team.players.map((name, index) => ({
         name,

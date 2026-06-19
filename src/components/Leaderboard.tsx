@@ -1,6 +1,7 @@
 import FamilyRow from "./FamilyRow";
 import styles from "./Leaderboard.module.css";
 import type { Tournament } from "@/data/types";
+import { getMajor } from "@/data/majors";
 import { getLiveLeaderboardData } from "@/lib/liveScores";
 
 interface LeaderboardProps {
@@ -9,6 +10,7 @@ interface LeaderboardProps {
 
 export default async function Leaderboard({ tournament }: LeaderboardProps) {
   const data = await getLiveLeaderboardData(tournament);
+  const accent = getMajor(tournament.slug).accent;
 
   return (
     <div className={styles.container}>
@@ -26,7 +28,7 @@ export default async function Leaderboard({ tournament }: LeaderboardProps) {
 
       <div className={styles.list}>
         {data.entries.map((entry) => (
-          <FamilyRow key={entry.owner} entry={entry} />
+          <FamilyRow key={entry.owner} entry={entry} accent={accent} />
         ))}
       </div>
     </div>
