@@ -56,5 +56,13 @@ export const usOpen2026: Tournament = {
       owner: "Peter Kohler",
       players: ["Ryder Cowan (A)", "Dustin Johnson", "Wyndham Clark", "Ben James"],
     },
+    {
+      owner: "John Keller",
+      players: ["Jon Rahm", "Wyndham Clark", "Rory McIlroy", "Scottie Scheffler"],
+    },
+    {
+      owner: "Reid Keller",
+      players: ["Rory McIlroy", "Ludvig Åberg", "Tommy Fleetwood", "Scottie Scheffler"],
+    },
   ],
 };
