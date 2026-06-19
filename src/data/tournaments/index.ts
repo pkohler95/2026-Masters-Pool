@@ -1,10 +1,12 @@
 import type { MajorSlug, Tournament } from "../types";
 import { masters2026 } from "./2026-masters";
 import { pgaChampionship2026 } from "./2026-pga-championship";
+import { usOpen2026 } from "./2026-us-open";
 
 export const tournaments: Tournament[] = [
   masters2026,
   pgaChampionship2026,
+  usOpen2026,
 ];
 
 export function getTournament(slug: MajorSlug, year: number): Tournament | undefined {

@@ -258,6 +258,7 @@ const TEAM_CUT_SORT_VALUE = 1_000_000;
 
 function buildEntries(tournament: Tournament, players: LivePlayerScore[]) {
   const playerLookup = toPlayerLookup(players);
+  const counted = tournament.countedPlayers ?? 4;
 
   const entries = tournament.teams.map((team) => {
     let missedCutCount = 0;
@@ -286,17 +287,17 @@ function buildEntries(tournament: Tournament, players: LivePlayerScore[]) {
       };
     });
 
-    const teamCut = missedCutCount > team.players.length - 4;
-    const sortedForTop4 = [...scoredPlayers].sort((a, b) => a._scoreValue - b._scoreValue);
-    const top4CountedNames = new Set(sortedForTop4.slice(0, 4).map((p) => p.name));
+    const teamCut = missedCutCount > team.players.length - counted;
+    const sortedForCount = [...scoredPlayers].sort((a, b) => a._scoreValue - b._scoreValue);
+    const countedNames = new Set(sortedForCount.slice(0, counted).map((p) => p.name));
 
     const totalScoreValue = teamCut
       ? TEAM_CUT_SORT_VALUE
-      : sortedForTop4.slice(0, 4).reduce((sum, p) => sum + p._scoreValue, 0);
+      : sortedForCount.slice(0, counted).reduce((sum, p) => sum + p._scoreValue, 0);
 
     const finalPlayers = scoredPlayers.map(({ _scoreValue, ...rest }) => ({
       ...rest,
-      isScoring: !teamCut && top4CountedNames.has(rest.name),
+      isScoring: !teamCut && countedNames.has(rest.name),
     })) satisfies PoolPlayerScore[];
 
     return {
@@ -325,6 +326,7 @@ function buildEntries(tournament: Tournament, players: LivePlayerScore[]) {
 }
 
 function createFallbackLeaderboard(tournament: Tournament): LiveLeaderboardData {
+  const counted = tournament.countedPlayers ?? 4;
   return {
     source: "espn-api",
     tournament: tournament.name,
@@ -343,7 +345,7 @@ function createFallbackLeaderboard(tournament: Tournament): LiveLeaderboardData 
         score: "—",
         thru: "Waiting for live data",
         status: "unavailable" as const,
-        isScoring: index < 4,
+        isScoring: index < counted,
       })),
       totalScore: "—",
       totalScoreValue: 0,

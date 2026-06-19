@@ -51,7 +51,9 @@ export default function Header({ tournament }: HeaderProps) {
             {tournament.year}
           </p>
           <h1 className={styles.title}>{tournament.name}</h1>
-          <p className={styles.subtitle}>Family Pool · Top 4 of 6 Count</p>
+          <p className={styles.subtitle}>
+            Family Pool · {tournament.scoringLabel ?? "Top 4 of 6 Count"}
+          </p>
           <p className={styles.meta}>
             <span>{tournament.venue}</span>
             <span aria-hidden="true" className={styles.dot}>·</span>

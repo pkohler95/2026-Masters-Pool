@@ -37,6 +37,12 @@ export type Tournament = {
   espn: EspnTournamentRef;
   teams: Team[];
   results?: TournamentResults;
+  // How many of each team's picks count toward its score. Defaults to 4
+  // ("top 4 of 6"). The US Open uses 4 picks that all count.
+  countedPlayers?: number;
+  // Header subtitle suffix describing the scoring format, e.g.
+  // "Top 4 of 6 Count" or "4 Players · All Count". Defaults to "Top 4 of 6 Count".
+  scoringLabel?: string;
 };
 
 export type MajorSlug =
